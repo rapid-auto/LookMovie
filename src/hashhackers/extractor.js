@@ -12,7 +12,7 @@ export async function extractStreams(tmdbId, mediaType) {
 
         // 2. Fetch the Token from your Vercel App
         // REPLACE THIS WITH YOUR NEW VERCEL URL IF IT CHANGED
-        const tokenData = await fetchJson(`https://multi-source-two.vercel.app/api/token`);
+        const tokenData = await fetchJson(`https://hashhackers.vercel.app/api/token`);
         const token = tokenData.token;
         if (!token) return [];
 
