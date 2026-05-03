@@ -1,11 +1,12 @@
 {
-  "name": "Hashhackers Source",
-  "version": "1.0.0",
+  "name": "Hash",
+  "version": "1.1.0",
   "scrapers": [
     {
       "author": "MultiSource",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "enabled": true,
       "id": "hashhackers",
@@ -23,10 +24,7 @@
       "formats": [
         "mp4",
         "mkv"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": true
+      ]
     }
   ]
 }
