@@ -1,0 +1,23 @@
+{
+  "name": "Hashhackers Source",
+  "description": "High-quality, multilingual direct file links.",
+  "version": "1.0.0",
+  "providers": [
+    {
+      "id": "hashhackers",
+      "name": "Hashhackers",
+      "description": "Premium 4K & 1080p multilingual streams.",
+      "version": "1.0.0",
+      "author": "YourName",
+      "supportedTypes": ["movie"],
+      "filename": "providers/hashhackers.js",
+      "enabled": true,
+      "logo": "",
+      "contentLanguage": ["en", "hi", "ta", "te"],
+      "formats": ["mp4", "mkv"],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true
+    }
+  ]
+}
