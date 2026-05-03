@@ -1,6 +1,12 @@
 /**
- * Hashhackers - Pure Promise Version (with Debug Logging)
+ * Hashhackers - Pure Promise Version (with Cloudflare Bypass)
  */
+
+var IOS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8"
+};
 
 function fetchJson(url, options) {
     console.log("[Hashhackers] Fetching: " + url);
@@ -20,8 +26,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
     console.log("[Hashhackers] getStreams called for: " + tmdbId + " | Type: " + mediaType);
     if (mediaType !== 'movie') return Promise.resolve([]);
 
-    // 1. Get TMDB info
-    return fetchJson("https://tmdb.vidsrc.wtf/tmdb/3/movie/" + tmdbId)
+    // 1. Get TMDB info (NOW WITH HEADERS TO BYPASS CLOUDFLARE)
+    return fetchJson("https://tmdb.vidsrc.wtf/tmdb/3/movie/" + tmdbId, { headers: IOS_HEADERS })
         .then(function(tmdbData) {
             console.log("[Hashhackers] TMDB Success: " + tmdbData.title);
             var title = tmdbData.title;
@@ -29,14 +35,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var query = encodeURIComponent((title + " " + year).trim());
 
             // 2. Get Token from Vercel
-            return fetchJson("https://hashhackers.vercel.app/api/token")
+            return fetchJson("https://multi-source-two.vercel.app/api/token")
                 .then(function(tokenData) {
                     console.log("[Hashhackers] Token Fetched Successfully");
                     var token = tokenData.token;
-                    if (!token) {
-                        console.error("[Hashhackers] No token in response!");
-                        return [];
-                    }
+                    if (!token) return [];
 
                     var HASH_HEADERS = {
                         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
@@ -63,7 +66,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                                 return fetchJson("https://tga-hd.api.hashhackers.com/genLink?type=mix_media&id=" + file.id, { headers: HASH_HEADERS })
                                     .then(function(linkData) {
                                         if (linkData.success && linkData.url) {
-                                            console.log("[Hashhackers] Link Generated for: " + file.file_name.substring(0, 20));
+                                            console.log("[Hashhackers] Link Generated!");
                                             var quality = "Auto";
                                             var fn = file.file_name.toLowerCase();
                                             if (fn.includes("2160p") || fn.includes("4k")) quality = "4K";
