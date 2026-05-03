@@ -1,12 +1,6 @@
 /**
- * Hashhackers - Pure Promise Version (with Cloudflare Bypass)
+ * Hashhackers - Pure Promise Version (Official TMDB API)
  */
-
-var IOS_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8"
-};
 
 function fetchJson(url, options) {
     console.log("[Hashhackers] Fetching: " + url);
@@ -26,20 +20,36 @@ function getStreams(tmdbId, mediaType, season, episode) {
     console.log("[Hashhackers] getStreams called for: " + tmdbId + " | Type: " + mediaType);
     if (mediaType !== 'movie') return Promise.resolve([]);
 
-    // 1. Get TMDB info (NOW WITH HEADERS TO BYPASS CLOUDFLARE)
-    return fetchJson("https://tmdb.vidsrc.wtf/tmdb/3/movie/" + tmdbId, { headers: IOS_HEADERS })
+    // 1. Get TMDB info (Using Official TMDB API to avoid Cloudflare 403)
+    var isImdb = String(tmdbId).startsWith("tt");
+    var tmdbUrl = isImdb 
+        ? "https://api.themoviedb.org/3/find/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&external_source=imdb_id&language=en-US"
+        : "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&language=en-US";
+
+    return fetchJson(tmdbUrl)
         .then(function(tmdbData) {
-            console.log("[Hashhackers] TMDB Success: " + tmdbData.title);
-            var title = tmdbData.title;
-            var year = tmdbData.release_date ? tmdbData.release_date.split('-')[0] : '';
+            // If it was an IMDb ID, data is inside an array. If TMDB ID, it is direct.
+            var movieData = isImdb ? (tmdbData.movie_results && tmdbData.movie_results[0]) : tmdbData;
+            
+            if (!movieData) {
+                console.error("[Hashhackers] No movie data found from TMDB");
+                return [];
+            }
+
+            console.log("[Hashhackers] TMDB Success: " + movieData.title);
+            var title = movieData.title;
+            var year = movieData.release_date ? movieData.release_date.split('-')[0] : '';
             var query = encodeURIComponent((title + " " + year).trim());
 
             // 2. Get Token from Vercel
-            return fetchJson("https://multi-source-two.vercel.app/api/token")
+            return fetchJson("https://hashhackers.vercel.app/api/token")
                 .then(function(tokenData) {
                     console.log("[Hashhackers] Token Fetched Successfully");
                     var token = tokenData.token;
-                    if (!token) return [];
+                    if (!token) {
+                        console.error("[Hashhackers] No token returned!");
+                        return [];
+                    }
 
                     var HASH_HEADERS = {
                         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
@@ -66,7 +76,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                                 return fetchJson("https://tga-hd.api.hashhackers.com/genLink?type=mix_media&id=" + file.id, { headers: HASH_HEADERS })
                                     .then(function(linkData) {
                                         if (linkData.success && linkData.url) {
-                                            console.log("[Hashhackers] Link Generated!");
+                                            console.log("[Hashhackers] Link Generated for: " + file.file_name.substring(0, 15));
                                             var quality = "Auto";
                                             var fn = file.file_name.toLowerCase();
                                             if (fn.includes("2160p") || fn.includes("4k")) quality = "4K";
