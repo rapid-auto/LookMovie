@@ -1,14 +1,19 @@
 /**
- * Hashhackers - Pure Promise Version (Official TMDB API)
+ * Hashhackers - Pure Promise Version (TV Support, Quality, Size, Strict Filter)
  */
+
+function formatBytes(bytes) {
+    if (!bytes || bytes == 0) return "Unknown";
+    var k = 1024;
+    var sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+    var i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
 
 function fetchJson(url, options) {
     console.log("[Hashhackers] Fetching: " + url);
     return fetch(url, options || {}).then(function(res) {
-        if (!res.ok) {
-            console.error("[Hashhackers] HTTP Error: " + res.status + " for " + url);
-            throw new Error("HTTP " + res.status);
-        }
+        if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
     }).catch(function(err) {
         console.error("[Hashhackers] Fetch Failed: " + err.message);
@@ -17,44 +22,54 @@ function fetchJson(url, options) {
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-    console.log("[Hashhackers] getStreams called for: " + tmdbId + " | Type: " + mediaType);
-    if (mediaType !== 'movie') return Promise.resolve([]);
+    console.log("[Hashhackers] getStreams: " + tmdbId + " | Type: " + mediaType);
+    
+    // Support both movies and TV shows
+    if (mediaType !== 'movie' && mediaType !== 'tv') return Promise.resolve([]);
 
-    // 1. Get TMDB info (Using Official TMDB API to avoid Cloudflare 403)
+    var isTv = mediaType === 'tv';
     var isImdb = String(tmdbId).startsWith("tt");
+    
+    // 1. Get TMDB info
     var tmdbUrl = isImdb 
         ? "https://api.themoviedb.org/3/find/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&external_source=imdb_id&language=en-US"
-        : "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&language=en-US";
+        : "https://api.themoviedb.org/3/" + (isTv ? "tv" : "movie") + "/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&language=en-US";
 
     return fetchJson(tmdbUrl)
         .then(function(tmdbData) {
-            // If it was an IMDb ID, data is inside an array. If TMDB ID, it is direct.
-            var movieData = isImdb ? (tmdbData.movie_results && tmdbData.movie_results[0]) : tmdbData;
-            
-            if (!movieData) {
-                console.error("[Hashhackers] No movie data found from TMDB");
-                return [];
+            var mediaData;
+            if (isImdb) {
+                mediaData = isTv ? (tmdbData.tv_results && tmdbData.tv_results[0]) : (tmdbData.movie_results && tmdbData.movie_results[0]);
+            } else {
+                mediaData = tmdbData;
             }
+            
+            if (!mediaData) return [];
 
-            console.log("[Hashhackers] TMDB Success: " + movieData.title);
-            var title = movieData.title;
-            var year = movieData.release_date ? movieData.release_date.split('-')[0] : '';
-            var query = encodeURIComponent((title + " " + year).trim());
+            var title = isTv ? mediaData.name : mediaData.title;
+            var releaseDate = isTv ? mediaData.first_air_date : mediaData.release_date;
+            var year = releaseDate ? releaseDate.split('-')[0] : '';
+            
+            // Format Query (e.g. "The Boys 2019 S01E01" or "Fight Club 1999")
+            var queryStr = title + " " + year;
+            if (isTv && season !== undefined && episode !== undefined) {
+                var s = season < 10 ? '0' + season : season;
+                var e = episode < 10 ? '0' + episode : episode;
+                queryStr += " S" + s + "E" + e;
+            }
+            var query = encodeURIComponent(queryStr.trim());
 
-            // 2. Get Token from Vercel
-            return fetchJson("https://hashhackers.vercel.app/api/token")
+            // 2. Get Token from Vercel (Cache Buster included)
+            var tokenUrl = "https://hashhackers.vercel.app/api/token?nocache=" + new Date().getTime();
+            
+            return fetchJson(tokenUrl)
                 .then(function(tokenData) {
-                    console.log("[Hashhackers] Token Fetched Successfully");
                     var token = tokenData.token;
-                    if (!token) {
-                        console.error("[Hashhackers] No token returned!");
-                        return [];
-                    }
+                    if (!token) return [];
 
                     var HASH_HEADERS = {
                         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
                         "Accept": "*/*",
-                        "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
                         "Authorization": "Bearer " + token,
                         "Origin": "https://bollywood.eu.org",
                         "Referer": "https://bollywood.eu.org/"
@@ -66,28 +81,36 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     return fetchJson(searchUrl, { headers: HASH_HEADERS })
                         .then(function(searchData) {
                             var files = searchData.files || [];
-                            console.log("[Hashhackers] Search Results Found: " + files.length);
-                            if (files.length === 0) return [];
+                            
+                            // STRICT FILTERING: Only pure .mkv or .mp4 files allowed
+                            var validFiles = files.filter(function(f) {
+                                var fn = f.file_name.toLowerCase().trim();
+                                return /\.(mkv|mp4)$/.test(fn);
+                            });
 
-                            var topFiles = files.slice(0, 5);
+                            if (validFiles.length === 0) return [];
+
+                            var topFiles = validFiles.slice(0, 6);
                             var streamPromises = topFiles.map(function(file) {
                                 
                                 // 4. Generate Links
                                 return fetchJson("https://tga-hd.api.hashhackers.com/genLink?type=mix_media&id=" + file.id, { headers: HASH_HEADERS })
                                     .then(function(linkData) {
                                         if (linkData.success && linkData.url) {
-                                            console.log("[Hashhackers] Link Generated for: " + file.file_name.substring(0, 15));
-                                            var quality = "Auto";
                                             var fn = file.file_name.toLowerCase();
+                                            var quality = "Auto";
+                                            
                                             if (fn.includes("2160p") || fn.includes("4k")) quality = "4K";
                                             else if (fn.includes("1080p")) quality = "1080p";
                                             else if (fn.includes("720p")) quality = "720p";
+                                            else if (fn.includes("480p")) quality = "480p";
 
                                             return {
                                                 name: "Hashhackers",
-                                                title: file.file_name.substring(0, 35) + "...",
+                                                title: file.file_name,
                                                 url: linkData.url,
-                                                quality: quality
+                                                quality: quality,
+                                                size: formatBytes(parseInt(file.file_size))
                                             };
                                         }
                                         return null;
@@ -95,14 +118,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
                             });
 
                             return Promise.all(streamPromises).then(function(results) {
-                                var finalStreams = results.filter(function(r) { return r !== null; });
-                                console.log("[Hashhackers] Final Streams Sent to App: " + finalStreams.length);
-                                return finalStreams;
+                                return results.filter(function(r) { return r !== null; });
                             });
                         });
                 });
         }).catch(function(error) {
-            console.error("[Hashhackers] Master Catch Error: " + error.message);
+            console.error("[Hashhackers] Error: " + error.message);
             return [];
         });
 }
