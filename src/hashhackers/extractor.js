@@ -1,72 +1,150 @@
-import { fetchJson } from './http.js';
+/**
+ * Extractor Logic
+ * Finds base domains, retrieves titles, and extracts final .m3u8 files.
+ */
 
-export async function extractStreams(tmdbId, mediaType) {
-    if (mediaType !== 'movie') return [];
+import { getHeaders, safeFetchText, safeFetchJson, USER_AGENT } from './http.js';
+
+let cachedBaseUrl = null;
+let cachedStreamBaseUrl = null;
+let cacheTimestamp = 0;
+const CACHE_DURATION = 3600 * 1000;
+
+async function getBaseUrls() {
+    if (cachedBaseUrl && (Date.now() - cacheTimestamp < CACHE_DURATION)) {
+        return { baseUrl: cachedBaseUrl, streamBaseUrl: cachedStreamBaseUrl };
+    }
+    try {
+        const html = await safeFetchText("https://netmirror.gg/2/en", {
+            headers: { "User-Agent": USER_AGENT, "Accept": "text/html" }
+        });
+        const match = html.match(/onclick="location\.href='([^']+)'"[^>]*>Go to Home/);
+        
+        if (match && match[1]) {
+            const parsedUrl = new URL(match[1]);
+            cachedBaseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+            const numMatch = cachedBaseUrl.match(/net(\d+)\.cc/);
+            if (numMatch) {
+                cachedStreamBaseUrl = cachedBaseUrl.replace(parseInt(numMatch[1]), parseInt(numMatch[1]) + 30);
+            }
+        }
+        cacheTimestamp = Date.now();
+    } catch (e) {
+        console.error("[Extractor] Init Error:", e);
+    }
+    return { 
+        baseUrl: cachedBaseUrl || "https://net22.cc", 
+        streamBaseUrl: cachedStreamBaseUrl || "https://net52.cc"
+    };
+}
+
+async function fetchServer1(title, baseUrl, streamBaseUrl) {
+    const streams = [];
+    const timestamp = Math.floor(Date.now() / 1000);
 
     try {
-        // 1. Convert TMDB ID to Title & Year
-        const tmdbData = await fetchJson(`https://tmdb.vidsrc.wtf/tmdb/3/movie/${tmdbId}`);
-        const title = tmdbData.title;
-        const year = tmdbData.release_date ? tmdbData.release_date.split('-')[0] : '';
-        const query = encodeURIComponent(`${title} ${year}`.trim());
-
-        // 2. Fetch the Token from your Vercel App
-        // REPLACE THIS WITH YOUR NEW VERCEL URL IF IT CHANGED
-        const tokenData = await fetchJson(`https://hashhackers.vercel.app/api/token`);
-        const token = tokenData.token;
-        if (!token) return [];
-
-        // Exact Safari headers sniffed from your iPhone
-        const HASH_HEADERS = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
-            "Accept": "*/*",
-            "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
-            "Authorization": `Bearer ${token}`, 
-            "Origin": "https://bollywood.eu.org",
-            "Referer": "https://bollywood.eu.org/"
-        };
-
-        // 3. Search Hashhackers
-        const searchData = await fetchJson(`https://tga-hd.api.hashhackers.com/mix_media_files/search?q=${query}&page=1`, {
-            headers: HASH_HEADERS
-        });
+        const searchUrl = `${baseUrl}/search.php?s=${encodeURIComponent(title)}&t=${timestamp}`;
+        const searchHeaders = getHeaders(searchUrl, '/home', 'nf');
+        const searchData = await safeFetchJson(searchUrl, { headers: searchHeaders });
         
-        const files = searchData.files || [];
-        if (files.length === 0) return [];
+        if (!searchData.searchResult || searchData.searchResult.length === 0) return streams;
+        const movieId = searchData.searchResult[0].id;
 
-        // 4. Limit to top 5 files to prevent Hermes engine timeout
-        const topFiles = files.slice(0, 5);
-        const streams = [];
+        const hashUrl = `${baseUrl}/play.php`;
+        const hashData = await safeFetchJson(hashUrl, {
+            method: 'POST',
+            headers: { ...searchHeaders, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+            body: `id=${movieId}`
+        });
+        if (!hashData.h) return streams;
 
-        // 5. Generate Direct Links Concurrently
-        await Promise.all(topFiles.map(async (file) => {
-            try {
-                const linkData = await fetchJson(`https://tga-hd.api.hashhackers.com/genLink?type=mix_media&id=${file.id}`, {
-                   headers: HASH_HEADERS
-                });
-                
-                if (linkData.success && linkData.url) {
-                    let quality = "Auto";
-                    const fn = file.file_name.toLowerCase();
-                    if (fn.includes("2160p") || fn.includes("4k")) quality = "4K";
-                    else if (fn.includes("1080p")) quality = "1080p";
-                    else if (fn.includes("720p")) quality = "720p";
+        const actualHash = hashData.h.startsWith("in=") ? hashData.h.substring(3) : hashData.h;
 
+        const playlistUrl = `${streamBaseUrl}/playlist.php?id=${movieId}&t=${encodeURIComponent(title)}&tm=${timestamp}&h=${actualHash}`;
+        const playlistHeaders = getHeaders(playlistUrl, '/', 'nf'); 
+        const playlistData = await safeFetchJson(playlistUrl, { headers: playlistHeaders });
+        
+        playlistData.forEach(item => {
+            if (item.sources) {
+                item.sources.forEach(source => {
                     streams.push({
-                        name: "Hashhackers",
-                        title: file.file_name.substring(0, 35) + "...", 
-                        url: linkData.url,
-                        quality: quality
+                        name: "NetMirror [S1]",
+                        title: `Netflix Server - ${source.label || 'HD'}`,
+                        url: `${streamBaseUrl}${source.file}`,
+                        quality: source.label || "1080p",
+                        headers: {
+                            "Referer": `${streamBaseUrl}/`,
+                            "Origin": streamBaseUrl,
+                            "User-Agent": USER_AGENT
+                        }
                     });
-                }
-            } catch (e) {
-                console.error("Link Gen Error for ID", file.id, e);
+                });
             }
-        }));
-
-        return streams;
-    } catch (error) {
-        console.error("Hashhackers Extractor Error:", error);
-        return [];
+        });
+    } catch (e) {
+        console.error(`[S1 Error]: ${e.message}`);
     }
+    return streams;
+}
+
+async function fetchServer2(title, streamBaseUrl) {
+    const streams = [];
+    const timestamp = Math.floor(Date.now() / 1000);
+    
+    try {
+        const searchUrl = `${streamBaseUrl}/pv/search.php?s=${encodeURIComponent(title)}`;
+        const s2Headers = getHeaders(searchUrl, '/search', 'pv');
+        const searchData = await safeFetchJson(searchUrl, { headers: s2Headers });
+        
+        if (!searchData.searchResult || searchData.searchResult.length === 0) return streams;
+        const movieId = searchData.searchResult[0].id;
+
+        const playlistUrl = `${streamBaseUrl}/pv/playlist.php?id=${movieId}&tm=${timestamp}`;
+        const playlistData = await safeFetchJson(playlistUrl, { headers: s2Headers });
+        
+        playlistData.forEach(item => {
+            if (item.sources) {
+                item.sources.forEach(source => {
+                    streams.push({
+                        name: "NetMirror [S2]",
+                        title: `Prime Server - ${source.label || 'HD'}`,
+                        url: `${streamBaseUrl}${source.file}`,
+                        quality: source.label || "1080p",
+                        headers: {
+                            "Referer": `${streamBaseUrl}/`,
+                            "Origin": streamBaseUrl,
+                            "User-Agent": USER_AGENT
+                        }
+                    });
+                });
+            }
+        });
+    } catch (e) {
+        console.error(`[S2 Error]: ${e.message}`);
+    }
+    return streams;
+}
+
+export async function extractStreams(tmdbId, mediaType, season, episode) {
+    if (mediaType !== 'movie') return [];
+
+    let title = "";
+    try {
+        const res = await fetch(`https://v3-cinemeta.strem.io/meta/movie/tmdb:${tmdbId}.json`);
+        const data = await res.json();
+        title = data.meta ? data.meta.name : "";
+    } catch (e) {
+        console.error("[Extractor] Title fetch error:", e);
+    }
+    
+    if (!title) return [];
+
+    const { baseUrl, streamBaseUrl } = await getBaseUrls();
+
+    const [streamsS1, streamsS2] = await Promise.all([
+        fetchServer1(title, baseUrl, streamBaseUrl),
+        fetchServer2(title, streamBaseUrl)
+    ]);
+
+    return [...streamsS1, ...streamsS2];
 }
