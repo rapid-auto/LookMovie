@@ -19,8 +19,8 @@
       ],
       "version": "1.0.0",
       "description": "Premium 4K & 1080p multilingual streams.",
-      "filename": "providers/hashhackers.js",
-      "name": "Hashhackers",
+      "filename": "providers/netmirror.js",
+      "name": "NetMirror",
       "formats": [
         "mp4",
         "mkv"
