@@ -1,18 +1,19 @@
 /**
- * NetMirror - Pure Promise Version (Hermes Native, WAF Bypass, Dynamic Hashes)
+ * NetMirror - Pure Promise Version (Dynamic Cookies + WAF Bypass)
  */
 
 var USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1";
 
 var cachedBaseUrl = null;
 var cachedStreamBaseUrl = null;
+var cachedS1Cookies = "";
+var cachedS2Cookies = "";
 var cacheTimestamp = 0;
 var CACHE_DURATION = 3600 * 1000;
 
-// THE EXPLOIT: Automatically generates fresh tokens to bypass IP-locking
+// FALLBACK EXPLOIT: Generates randomized tokens if the live scrape fails
 function generateSpoofedCookies() {
     var now = Math.floor(Date.now() / 1000);
-    
     var mutateHex = function(hexStr) {
         var chars = hexStr.split('');
         for(var i = chars.length - 4; i < chars.length; i++) {
@@ -33,10 +34,25 @@ function generateSpoofedCookies() {
     return "t_hash_t=" + encodeURIComponent(tHashT) + "; t_hash=" + encodeURIComponent(tHash) + "; user_token=" + userToken;
 }
 
+// PRIMARY METHOD: Aggressively extracts hidden cryptographic tokens from HTML source code
+function extractHiddenTokens(html) {
+    var tokens = [];
+    var tHashMatch = html.match(/t_hash\s*[:=]\s*['"]([^'"]+)['"]/);
+    var tHashTMatch = html.match(/t_hash_t\s*[:=]\s*['"]([^'"]+)['"]/);
+    var userTokenMatch = html.match(/user_token\s*[:=]\s*['"]([^'"]+)['"]/);
+
+    if (tHashMatch) tokens.push("t_hash=" + tHashMatch[1]);
+    if (tHashTMatch) tokens.push("t_hash_t=" + tHashTMatch[1]);
+    if (userTokenMatch) tokens.push("user_token=" + userTokenMatch[1]);
+    
+    return tokens.join('; ');
+}
+
 // Generates matching browser headers for WAF bypass
-function getHeaders(targetUrl, refererPath, ottTag) {
+function getHeaders(targetUrl, refererPath, ottTag, dynamicCookies) {
     var urlObj = new URL(targetUrl);
-    var dynamicCookies = generateSpoofedCookies();
+    // If the live scraper failed, fall back to the spoofed hex exploit
+    var finalCookies = dynamicCookies ? dynamicCookies : generateSpoofedCookies();
     
     return {
         "User-Agent": USER_AGENT, 
@@ -50,11 +66,11 @@ function getHeaders(targetUrl, refererPath, ottTag) {
         "Sec-Fetch-Dest": "empty",
         "X-Requested-With": "XMLHttpRequest",
         "Connection": "keep-alive",
-        "Cookie": "ott=" + ottTag + "; " + dynamicCookies
+        "Cookie": "ott=" + ottTag + "; " + finalCookies
     };
 }
 
-// Helper: Fetch Text
+// Helpers
 function safeFetchText(url, options) {
     return fetch(url, options || {}).then(function(res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -62,7 +78,6 @@ function safeFetchText(url, options) {
     });
 }
 
-// Helper: Fetch JSON
 function safeFetchJson(url, options) {
     return fetch(url, options || {}).then(function(res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -70,10 +85,15 @@ function safeFetchJson(url, options) {
     });
 }
 
-// Derives the dynamic net22 / net52 backend URLs
-function getBaseUrls() {
-    if (cachedBaseUrl && (Date.now() - cacheTimestamp < CACHE_DURATION)) {
-        return Promise.resolve({ baseUrl: cachedBaseUrl, streamBaseUrl: cachedStreamBaseUrl });
+// Derives backend URLs AND automatically scrapes the live cookies
+function getBaseUrlsAndCookies() {
+    if (cachedBaseUrl && cachedS1Cookies && (Date.now() - cacheTimestamp < CACHE_DURATION)) {
+        return Promise.resolve({ 
+            baseUrl: cachedBaseUrl, 
+            streamBaseUrl: cachedStreamBaseUrl,
+            s1Cookies: cachedS1Cookies,
+            s2Cookies: cachedS2Cookies
+        });
     }
     
     return safeFetchText("https://netmirror.gg/2/en", {
@@ -92,22 +112,38 @@ function getBaseUrls() {
                 streamBaseUrl = baseUrl.replace(numMatch[1], String(num + 30));
             }
         }
-        
-        cachedBaseUrl = baseUrl;
-        cachedStreamBaseUrl = streamBaseUrl;
-        cacheTimestamp = Date.now();
-        
-        return { baseUrl: baseUrl, streamBaseUrl: streamBaseUrl };
+
+        // Simultaneously fetch the homepages of both servers to scrape the cookies
+        var p1 = safeFetchText(baseUrl + "/home", { headers: { "User-Agent": USER_AGENT } })
+            .then(extractHiddenTokens).catch(function() { return ""; });
+            
+        var p2 = safeFetchText(streamBaseUrl + "/search", { headers: { "User-Agent": USER_AGENT } })
+            .then(extractHiddenTokens).catch(function() { return ""; });
+
+        return Promise.all([p1, p2]).then(function(cookies) {
+            cachedBaseUrl = baseUrl;
+            cachedStreamBaseUrl = streamBaseUrl;
+            cachedS1Cookies = cookies[0];
+            cachedS2Cookies = cookies[1];
+            cacheTimestamp = Date.now();
+            
+            return { 
+                baseUrl: baseUrl, 
+                streamBaseUrl: streamBaseUrl,
+                s1Cookies: cookies[0],
+                s2Cookies: cookies[1]
+            };
+        });
     }).catch(function(e) {
         console.error("[NetMirror] Init Error: " + e.message);
-        return { baseUrl: "https://net22.cc", streamBaseUrl: "https://net52.cc" };
+        return { baseUrl: "https://net22.cc", streamBaseUrl: "https://net52.cc", s1Cookies: "", s2Cookies: "" };
     });
 }
 
-function fetchServer1(title, baseUrl, streamBaseUrl) {
+function fetchServer1(title, baseUrl, streamBaseUrl, s1Cookies) {
     var timestamp = Math.floor(Date.now() / 1000);
     var searchUrl = baseUrl + "/search.php?s=" + encodeURIComponent(title) + "&t=" + timestamp;
-    var searchHeaders = getHeaders(searchUrl, '/home', 'nf');
+    var searchHeaders = getHeaders(searchUrl, '/home', 'nf', s1Cookies);
 
     return safeFetchJson(searchUrl, { headers: searchHeaders }).then(function(searchData) {
         if (!searchData.searchResult || searchData.searchResult.length === 0) return [];
@@ -123,7 +159,7 @@ function fetchServer1(title, baseUrl, streamBaseUrl) {
             var actualHash = hashData.h.indexOf("in=") === 0 ? hashData.h.substring(3) : hashData.h;
 
             var playlistUrl = streamBaseUrl + "/playlist.php?id=" + movieId + "&t=" + encodeURIComponent(title) + "&tm=" + timestamp + "&h=" + actualHash;
-            var playlistHeaders = getHeaders(playlistUrl, '/', 'nf');
+            var playlistHeaders = getHeaders(playlistUrl, '/', 'nf', s1Cookies);
 
             return safeFetchJson(playlistUrl, { headers: playlistHeaders }).then(function(playlistData) {
                 var streams = [];
@@ -153,10 +189,10 @@ function fetchServer1(title, baseUrl, streamBaseUrl) {
     });
 }
 
-function fetchServer2(title, streamBaseUrl) {
+function fetchServer2(title, streamBaseUrl, s2Cookies) {
     var timestamp = Math.floor(Date.now() / 1000);
     var searchUrl = streamBaseUrl + "/pv/search.php?s=" + encodeURIComponent(title);
-    var searchHeaders = getHeaders(searchUrl, '/search', 'pv');
+    var searchHeaders = getHeaders(searchUrl, '/search', 'pv', s2Cookies);
 
     return safeFetchJson(searchUrl, { headers: searchHeaders }).then(function(searchData) {
         if (!searchData.searchResult || searchData.searchResult.length === 0) return [];
@@ -197,7 +233,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     var isImdb = String(tmdbId).indexOf("tt") === 0;
     
-    // Use TMDB API to convert ID to Movie Title
     var tmdbUrl = isImdb 
         ? "https://api.themoviedb.org/3/find/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&external_source=imdb_id&language=en-US"
         : "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=d131017ccc6e5462a81c9304d21476de&language=en-US";
@@ -213,10 +248,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!mediaData || !mediaData.title) return [];
         var title = mediaData.title;
 
-        return getBaseUrls().then(function(urls) {
+        return getBaseUrlsAndCookies().then(function(config) {
             return Promise.all([
-                fetchServer1(title, urls.baseUrl, urls.streamBaseUrl),
-                fetchServer2(title, urls.streamBaseUrl)
+                fetchServer1(title, config.baseUrl, config.streamBaseUrl, config.s1Cookies),
+                fetchServer2(title, config.streamBaseUrl, config.s2Cookies)
             ]).then(function(results) {
                 var streamsS1 = results[0] || [];
                 var streamsS2 = results[1] || [];
