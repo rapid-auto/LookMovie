@@ -1,16 +1,16 @@
 {
-  "name": "Hash",
+  "name": "LookMovie",
   "version": "1.1.0",
   "scrapers": [
     {
-      "author": "MultiSource",
+      "author": "Fateh Brar",
       "supportedTypes": [
         "movie",
         "tv"
       ],
       "enabled": true,
-      "id": "hashhackers",
-      "logo": "",
+      "id": "nuvio.lookmovie",
+      "logo": "https://www.lookmovie2.to/images/logo1.webp",
       "contentLanguage": [
         "en",
         "hi",
@@ -19,8 +19,7 @@
       ],
       "version": "1.0.0",
       "description": "Premium 4K & 1080p multilingual streams.",
-      "filename": "providers/netmirror.js",
-      "name": "NetMirror",
+      "name": "LookMovie",
       "formats": [
         "mp4",
         "mkv"
