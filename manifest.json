@@ -19,6 +19,7 @@
       ],
       "version": "1.0.0",
       "description": "Premium 4K & 1080p multilingual streams.",
+      "filename": "providers/lookmovie2.js",
       "name": "LookMovie",
       "formats": [
         "mp4",
